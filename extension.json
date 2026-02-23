@@ -1,0 +1,89 @@
+{
+	"name": "lceda-pro-flow",
+	"uuid": "55bba75d64834a05b89023d01d355bcd",
+	"displayName": "Flow",
+	"description": "用代码描述电路 - 声明式的 PCB 设计语言，让电路设计像写代码一样简单",
+	"version": "0.1.0",
+	"publisher": "Cyfrit <i@cli.tf>",
+	"engines": {
+		"eda": "^2.3.0"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/cyfrit/lceda-pro-flow"
+	},
+	"categories": "Other",
+	"keywords": [
+		"PCB",
+		"DSL",
+		"Code",
+		"Automation",
+		"Flow",
+		"Circuit"
+	],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "https://github.com/cyfrit/lceda-pro-flow",
+	"bugs": "https://github.com/cyfrit/lceda-pro-flow/issues",
+	"activationEvents": {},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"home": [
+			{
+				"id": "Flow DSL",
+				"title": "⚡ Flow",
+				"menuItems": [
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					},
+					{
+						"id": "DebugTmp",
+						"title": "Debug Tmp",
+						"registerFn": "debugFetchShortcuts"
+					}
+				]
+			}
+		],
+		"sch": [
+			{
+				"id": "Flow DSL",
+				"title": "⚡ Flow",
+				"menuItems": [
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					},
+					{
+						"id": "DebugTmp",
+						"title": "Debug Tmp",
+						"registerFn": "debugFetchShortcuts"
+					}
+				]
+			}
+		],
+		"pcb": [
+			{
+				"id": "Flow DSL",
+				"title": "⚡ Flow",
+				"menuItems": [
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					},
+					{
+						"id": "DebugTmp",
+						"title": "Debug Tmp",
+						"registerFn": "debugFetchShortcuts"
+					}
+				]
+			}
+		]
+	}
+}
