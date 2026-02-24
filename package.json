@@ -8,7 +8,6 @@
 	"scripts": {
 		"compile": "rimraf ./dist/ && ts-node ./config/esbuild.prod.ts",
 		"flow:test": "ts-node src/test.ts",
-		//"prepare": "husky",
 		"prettier:all": "prettier --write .",
 		"eslint:all": "eslint --ext .ts --fix .",
 		"fix": "npm run prettier:all && npm run eslint:all",

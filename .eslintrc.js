@@ -9,6 +9,7 @@ module.exports = {
 		'no-param-reassign': 'off',
 		'max-params': 'off',
 		'tsdoc/syntax': 'warn',
+		'@typescript-eslint/member-ordering': 'off',
 	},
 	root: true,
 };

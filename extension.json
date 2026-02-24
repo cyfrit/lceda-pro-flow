@@ -14,14 +14,7 @@
 		"url": "https://github.com/cyfrit/lceda-pro-flow"
 	},
 	"categories": "Other",
-	"keywords": [
-		"PCB",
-		"DSL",
-		"Code",
-		"Automation",
-		"Flow",
-		"Circuit"
-	],
+	"keywords": ["PCB", "DSL", "Code", "Automation", "Flow", "Circuit"],
 	"images": {
 		"logo": "./images/logo.png"
 	},

@@ -4,7 +4,6 @@
  * 本文件为默认扩展入口文件
  */
 import * as extensionConfig from '../extension.json';
-
 // ==================== Flow DSL Imports ====================
 import { Place } from './actions/Place';
 import { commit } from './core/commit';
@@ -14,7 +13,7 @@ import { commit } from './core/commit';
  * 插件激活时自动调用
  * 将 Flow DSL API 挂载到全局作用域，让用户可以直接使用
  */
-export function activate(status?: 'onStartupFinished', arg?: string): void {
+export function activate(): void {
 	// 输出 FLOW 艺术字
 	console.log(`
  ███████████ █████          ███████    █████   ███   █████
