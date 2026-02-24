@@ -1,31 +1,18 @@
 import type { ComponentIntent, ComponentSpec, ComponentType } from '../core/types';
-
-/**
- * 器件搜索结果（来自 EDA API）
- */
-interface DeviceSearchResult {
-	uuid: string;
-	name: string;
-	lcsc?: string;
-	symbolUuid: string;
-	symbolName: string;
-	footprintUuid: string;
-	footprintName?: string;
-	libraryUuid: string;
-	manufacturer?: string;
-}
+import { getDeviceByLcscId, searchDevice } from '../eda-api/library';
+import type { EDADeviceSearchItem } from '../eda-api/types';
 
 /**
  * SmartResolver: 将用户的模糊意图解析为具体的 ComponentSpec
  *
  * 解析策略：
- * 1. 直接指定 LCSC 编号 → 调用 eda.lib.Device.getByLcscIds()
- * 2. 芯片型号 → 调用 eda.lib.Device.search() 搜索型号
- * 3. 语义描述（如"10k 电阻"）→ 调用 eda.lib.Device.search() 搜索关键字
+ * 1. 直接指定 LCSC 编号 → 调用 getDeviceByLcscId()
+ * 2. 芯片型号 → 调用 searchDevice() 搜索型号
+ * 3. 语义描述（如"10k 电阻"）→ 调用 searchDevice() 搜索关键字
  */
 export class SmartResolver {
 	// 缓存已搜索的结果，避免重复查询
-	private static searchCache = new Map<string, DeviceSearchResult>();
+	private static searchCache = new Map<string, EDADeviceSearchItem>();
 
 	/**
 	 * resolve: 异步解析 ComponentIntent 为 ComponentSpec
@@ -44,43 +31,17 @@ export class SmartResolver {
 		if (intent.lcsc) {
 			const device = await this.searchByLcsc(intent.lcsc);
 			if (device) {
-				return {
-					type,
-					value: intent.value || device.name,
-					lcsc: device.lcsc,
-					package: device.footprintName || 'UNKNOWN',
-					footprint: device.footprintName || 'UNKNOWN',
-					manufacturer: device.manufacturer,
-					prefer: intent.prefer,
-					// 保存 EDA 需要的引用
-					...(device as any),
-				};
+				return this.deviceToSpec(device, type, intent);
 			}
 			// LCSC 编号未找到，返回用户指定的编号（可能是新料号）
-			return {
-				type,
-				value: intent.value || intent.model,
-				lcsc: intent.lcsc,
-				package: intent.pkg || 'UNKNOWN',
-				footprint: intent.pkg ? `${type[0]}_${intent.pkg}` : 'UNKNOWN',
-				prefer: intent.prefer,
-			};
+			return this.createGenericSpec(type, intent);
 		}
 
 		// 优先级 2: 芯片型号查询
 		if (intent.model) {
 			const device = await this.searchByKeyword(intent.model);
 			if (device) {
-				return {
-					type,
-					value: intent.model,
-					lcsc: device.lcsc,
-					package: device.footprintName || 'UNKNOWN',
-					footprint: device.footprintName || 'UNKNOWN',
-					manufacturer: device.manufacturer,
-					prefer: intent.prefer,
-					...(device as any),
-				};
+				return this.deviceToSpec(device, type, intent);
 			}
 		}
 
@@ -89,20 +50,42 @@ export class SmartResolver {
 			const keyword = `${type} ${intent.value}${intent.pkg ? ' ' + intent.pkg : ''}`;
 			const device = await this.searchByKeyword(keyword);
 			if (device) {
-				return {
-					type,
-					value: intent.value,
-					lcsc: device.lcsc,
-					package: device.footprintName || intent.pkg || 'UNKNOWN',
-					footprint: device.footprintName || intent.pkg || 'UNKNOWN',
-					manufacturer: device.manufacturer,
-					prefer: intent.prefer,
-					...(device as any),
-				};
+				return this.deviceToSpec(device, type, intent);
 			}
 		}
 
 		// 优先级 4: Generic fallback
+		return this.createGenericSpec(type, intent);
+	}
+
+	/**
+	 * 将 EDA 器件搜索结果转换为 ComponentSpec
+	 */
+	private deviceToSpec(
+		device: EDADeviceSearchItem,
+		type: ComponentType,
+		intent: ComponentIntent,
+	): ComponentSpec {
+		return {
+			type,
+			value: intent.value || device.name,
+			lcsc: device.lcsc,
+			package: device.footprintName || 'UNKNOWN',
+			footprint: device.footprintName || 'UNKNOWN',
+			manufacturer: device.manufacturer,
+			prefer: intent.prefer,
+			// EDA API 需要的字段
+			uuid: device.uuid,
+			symbolUuid: device.symbolUuid,
+			footprintUuid: device.footprintUuid,
+			libraryUuid: device.libraryUuid,
+		};
+	}
+
+	/**
+	 * 创建通用规格（当搜索失败时）
+	 */
+	private createGenericSpec(type: ComponentType, intent: ComponentIntent): ComponentSpec {
 		const pkg = intent.pkg || '0805';
 		return {
 			type,
@@ -118,7 +101,7 @@ export class SmartResolver {
 	/**
 	 * 按 LCSC 编号搜索器件
 	 */
-	private async searchByLcsc(lcscCode: string): Promise<DeviceSearchResult | null> {
+	private async searchByLcsc(lcscCode: string): Promise<EDADeviceSearchItem | null> {
 		// 检查缓存
 		const cached = SmartResolver.searchCache.get(`lcsc:${lcscCode}`);
 		if (cached) {
@@ -129,12 +112,10 @@ export class SmartResolver {
 		try {
 			console.log(`🔍 [Resolver] Searching LCSC: ${lcscCode}`);
 
-			// 调用 EDA API
-			// @ts-expect-error eda 是全局对象
-			const results = await eda.lib.Device.getByLcscIds(lcscCode, undefined, false);
+			const results = await getDeviceByLcscId(lcscCode, undefined, false);
 
-			if (results && Array.isArray(results) && results.length > 0) {
-				const device = results[0] as DeviceSearchResult;
+			if (results && results.length > 0) {
+				const device = results[0];
 				console.log(`✅ [Resolver] Found: ${device.name} (${device.lcsc})`);
 
 				// 缓存结果
@@ -154,7 +135,7 @@ export class SmartResolver {
 	/**
 	 * 按关键字搜索器件
 	 */
-	private async searchByKeyword(keyword: string): Promise<DeviceSearchResult | null> {
+	private async searchByKeyword(keyword: string): Promise<EDADeviceSearchItem | null> {
 		// 检查缓存
 		const cached = SmartResolver.searchCache.get(`kw:${keyword}`);
 		if (cached) {
@@ -165,12 +146,10 @@ export class SmartResolver {
 		try {
 			console.log(`🔍 [Resolver] Searching: ${keyword}`);
 
-			// 调用 EDA API
-			// @ts-expect-error eda 是全局对象
-			const results = await eda.lib.Device.search(keyword, undefined, undefined, undefined, 10, 0);
+			const results = await searchDevice(keyword, { itemsOfPage: 10, page: 0 });
 
-			if (results && Array.isArray(results) && results.length > 0) {
-				const device = results[0] as DeviceSearchResult;
+			if (results && results.length > 0) {
+				const device = results[0];
 				console.log(`✅ [Resolver] Found: ${device.name}`);
 
 				// 缓存结果

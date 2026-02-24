@@ -1,5 +1,6 @@
 import type { SmartResolver } from '../resolver/SmartResolver';
 import type { ComponentIntent, ComponentSpec } from './types';
+import { placeComponent } from '../eda-api/schematic';
 
 // PlaceTask: 封装单个 Place 操作的任务
 export class PlaceTask {
@@ -63,7 +64,7 @@ export class PlaceTask {
 	 *
 	 * 执行流程：
 	 * 1. Resolver 异步解析意图 → ComponentSpec（包含 EDA 需要的 uuid, libraryUuid 等）
-	 * 2. 调用 eda.sch.PrimitiveComponent.create() 放置元件
+	 * 2. 调用 placeComponent() 放置元件到原理图
 	 * 3. 返回真实 EDA 图元 ID
 	 */
 	public async execute(): Promise<string | undefined> {
@@ -79,20 +80,26 @@ export class PlaceTask {
 			console.log(`   Position: (${this.intent.x ?? 0}, ${this.intent.y ?? 0})`);
 			console.log(`   Rotation: ${this.intent.rot ?? 0}°`);
 
-			// 2) 调用 EDA API 放置元件
-			// @ts-expect-error eda 是全局对象
-			const primitive = await eda.sch.PrimitiveComponent.create(
+			// 2) 检查是否有必需的 EDA 字段
+			if (!spec.uuid || !spec.libraryUuid) {
+				console.warn(`⚠️ [${this.tempId}] Missing EDA fields (uuid/libraryUuid), skipping placement`);
+				return undefined;
+			}
+
+			// 3) 调用 EDA API 放置元件
+			const primitive = await placeComponent(
 				{
-					uuid: spec.uuid || '',
-					libraryUuid: spec.libraryUuid || '',
+					uuid: spec.uuid,
+					libraryUuid: spec.libraryUuid,
 				},
 				this.intent.x ?? 0,
 				this.intent.y ?? 0,
-				undefined, // subPartName
-				this.intent.rot ?? 0,
-				false, // mirror
-				true, // addIntoBom
-				true, // addIntoPcb
+				{
+					rotation: this.intent.rot ?? 0,
+					mirror: false,
+					addIntoBom: true,
+					addIntoPcb: true,
+				},
 			);
 
 			if (primitive) {
