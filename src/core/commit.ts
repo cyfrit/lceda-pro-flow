@@ -32,9 +32,6 @@ import { Scheduler } from './Scheduler';
 export async function commit(): Promise<void> {
 	const scheduler = Scheduler.getInstance();
 
-	// 立即同步执行
-	scheduler.flushNow();
-
-	// 返回 Promise（虽然已经同步执行完，但保持接口一致性）
-	return Promise.resolve();
+	// 异步执行
+	await scheduler.flushNow();
 }

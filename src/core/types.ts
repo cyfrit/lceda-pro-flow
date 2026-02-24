@@ -41,6 +41,11 @@ export interface ComponentSpec {
 	footprint: string; // PCB 上的封装标识
 	manufacturer?: string;
 	prefer?: string; // 解析时命中的优先条件
+	// EDA API 需要的字段
+	uuid?: string; // 器件 UUID
+	symbolUuid?: string; // 符号 UUID
+	footprintUuid?: string; // 封装 UUID
+	libraryUuid?: string; // 库 UUID
 }
 
 // 发送给 EDA 的最终命令结构（PlaceCommand）

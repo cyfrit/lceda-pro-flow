@@ -5,7 +5,7 @@ import type { PlaceTask } from './PlaceTask';
  *
  * 核心职责：
  * 1. 收集用户在当前同步代码块中创建的所有任务
- * 2. 在当前 JavaScript 执行栈清空后，统一批量执行（Batch Execution）
+ * 2. 在当前 JavaScript 执行栈清空后，统一批量异步执行（Batch Async Execution）
  * 3. 维护 tempId -> realEdaId 的映射，供后续操作引用
  *
  * Event Loop 机制解析：
@@ -21,9 +21,9 @@ import type { PlaceTask } from './PlaceTask';
  * │                                                              │
  * │  3. 执行 Microtask Queue（微任务队列）                       │
  * │     - queueMicrotask(() => this.flush())  // 这里！         │
- * │     - 批量解析所有 Task（Resolver）                          │
- * │     - 批量生成 Command JSON                                  │
- * │     - 批量调用 EDA API (eda.applyCommand)                   │
+ * │     - 批量异步执行所有 Task（await task.execute()）          │
+ * │     - Resolver 调用 EDA API 搜索元件                         │
+ * │     - 调用 eda.sch.PrimitiveComponent.create() 放置          │
  * │                                                              │
  * │  4. 执行 Macrotask Queue（宏任务：setTimeout, I/O...）      │
  * └─────────────────────────────────────────────────────────────┘
@@ -91,19 +91,19 @@ export class Scheduler {
 	}
 
 	/**
-	 * 批量执行所有任务（独立的 Commit 函数）
+	 * 批量异步执行所有任务
 	 *
 	 * 执行流程：
 	 * 1. 取出当前队列的所有 Task（snapshot）
 	 * 2. 清空队列，重置标志位
-	 * 3. 遍历每个 Task：
-	 *    - 调用 Task.execute() -> Resolver -> Command -> EDA API
-	 *    - 模拟生成 realEdaId
+	 * 3. 并行执行每个 Task：
+	 *    - 调用 Task.execute() → Resolver 异步搜索 → EDA API 放置
+	 *    - 获得真实 EDA 图元 ID
 	 *    - 建立 tempId -> realEdaId 映射
 	 *    - resolve 对应的 Promise
 	 * 4. 输出批处理完成日志
 	 */
-	private flush(): void {
+	private async flush(): Promise<void> {
 		const tasks = [...this.taskQueue];
 		this.taskQueue = [];
 		this.isFlushScheduled = false;
@@ -111,32 +111,35 @@ export class Scheduler {
 		console.log(`\n🔄 Scheduler: Flushing ${tasks.length} task(s)...`);
 		console.log(`📍 [Microtask Phase] Current call stack is empty, executing batch...\n`);
 
-		for (const task of tasks) {
+		// 并行执行所有任务
+		const promises = tasks.map(async (task) => {
 			try {
-				// 执行任务：Resolver -> Command -> 模拟 EDA API
-				task.execute();
+				// 执行任务：异步调用 EDA API
+				const realEdaId = await task.execute();
 
-				// 模拟：执行后从 EDA 获得真实 ID
-				// 在真实场景中，这里是 eda.applyCommand() 的返回值
-				const realEdaId = `eda_${Math.random().toString(36).substr(2, 9)}`;
-				this.tempIdMap.set(task.getTempId(), realEdaId);
+				if (realEdaId) {
+					// 建立 tempId -> realEdaId 映射
+					this.tempIdMap.set(task.getTempId(), realEdaId);
 
-				// Resolve 对应的 Promise（支持 await 语法）
-				const resolver = this.pendingResolvers.get(task.getTempId());
-				if (resolver) {
-					resolver();
-					this.pendingResolvers.delete(task.getTempId());
+					// Resolve 对应的 Promise（支持 await 语法）
+					const resolver = this.pendingResolvers.get(task.getTempId());
+					if (resolver) {
+						resolver();
+						this.pendingResolvers.delete(task.getTempId());
+					}
 				}
 			} catch (error) {
 				console.error(`❌ Task [${task.getTempId()}] execution failed:`, error);
 			}
-		}
+		});
+
+		await Promise.all(promises);
 
 		console.log(`✅ Scheduler: Batch execution completed.\n`);
 	}
 
 	/**
-	 * 手动立即刷新队列（同步版本）
+	 * 手动立即刷新队列（异步版本）
 	 *
 	 * 用途：
 	 * - 用户手动调用 commit() 强制执行当前批次
@@ -145,14 +148,14 @@ export class Scheduler {
 	 *
 	 * 与自动批处理的区别：
 	 * - 自动批处理在 microtask 中异步执行
-	 * - 手动刷新立即同步执行，不等待 microtask
+	 * - 手动刷新立即执行，但仍然是异步的
 	 */
-	public flushNow(): void {
+	public async flushNow(): Promise<void> {
 		if (this.taskQueue.length > 0) {
 			// 取消已安排的自动 flush（如果有）
 			this.isFlushScheduled = false;
 			// 立即执行
-			this.flush();
+			await this.flush();
 		}
 	}
 
@@ -161,9 +164,9 @@ export class Scheduler {
 	 */
 	public async forceFlush(): Promise<void> {
 		return new Promise((resolve) => {
-			queueMicrotask(() => {
+			queueMicrotask(async () => {
 				if (this.taskQueue.length > 0) {
-					this.flush();
+					await this.flush();
 				}
 				resolve();
 			});

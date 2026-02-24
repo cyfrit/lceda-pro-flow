@@ -1,70 +1,63 @@
 import type { ComponentIntent, ComponentSpec, ComponentType } from '../core/types';
 
-// SmartResolver: 将用户的模糊意图解析为具体的 ComponentSpec
-// 这个实现使用一个简单的 MOCK_DATABASE 来演示解析流程。
+/**
+ * 器件搜索结果（来自 EDA API）
+ */
+interface DeviceSearchResult {
+	uuid: string;
+	name: string;
+	lcsc?: string;
+	symbolUuid: string;
+	symbolName: string;
+	footprintUuid: string;
+	footprintName?: string;
+	libraryUuid: string;
+	manufacturer?: string;
+}
+
+/**
+ * SmartResolver: 将用户的模糊意图解析为具体的 ComponentSpec
+ *
+ * 解析策略：
+ * 1. 直接指定 LCSC 编号 → 调用 eda.lib.Device.getByLcscIds()
+ * 2. 芯片型号 → 调用 eda.lib.Device.search() 搜索型号
+ * 3. 语义描述（如"10k 电阻"）→ 调用 eda.lib.Device.search() 搜索关键字
+ */
 export class SmartResolver {
-	// Mock 数据库: key -> ComponentSpec
-	private static MOCK_DATABASE: Record<string, Partial<ComponentSpec>> = {
-		// Resistors
-		'Resistor:10k:0603': { lcsc: 'C17414', package: '0603', footprint: 'R_0603' },
-		'Resistor:1k:0603': { lcsc: 'C17413', package: '0603', footprint: 'R_0603' },
-		'Resistor:10k:0805': { lcsc: 'C20001', package: '0805', footprint: 'R_0805' },
-		// Capacitors
-		'Capacitor:1uF:0603': { lcsc: 'C28001', package: '0603', footprint: 'C_0603' },
-		'Capacitor:100nF:0603': { lcsc: 'C28002', package: '0603', footprint: 'C_0603' },
-	};
-
-	// LCSC 直接查询数据库（模拟）
-	private static LCSC_DATABASE: Record<string, Partial<ComponentSpec>> = {
-		'C8734': {
-			lcsc: 'C8734',
-			package: 'LQFP-48',
-			footprint: 'LQFP-48_7x7x05P',
-			manufacturer: 'STMicroelectronics',
-			value: 'STM32F103C8T6',
-		},
-		'C17414': { lcsc: 'C17414', package: '0603', footprint: 'R_0603', value: '10k' },
-		'C17413': { lcsc: 'C17413', package: '0603', footprint: 'R_0603', value: '1k' },
-		'C28001': { lcsc: 'C28001', package: '0603', footprint: 'C_0603', value: '1uF' },
-	};
-
-	// 芯片型号数据库（模拟）
-	private static MODEL_DATABASE: Record<string, string> = {
-		'STM32F103C8T6': 'C8734',
-		'ATmega328P': 'C9998',
-		'ESP32-WROOM-32': 'C82899',
-	};
+	// 缓存已搜索的结果，避免重复查询
+	private static searchCache = new Map<string, DeviceSearchResult>();
 
 	/**
-	 * resolve: 将 ComponentIntent 转为 ComponentSpec
+	 * resolve: 异步解析 ComponentIntent 为 ComponentSpec
 	 *
 	 * 解析优先级：
 	 * 1. 直接指定 LCSC 编号（intent.lcsc）- 优先级最高
-	 * 2. 芯片型号（intent.model）- 查询型号数据库
-	 * 3. 语义查询（type + value + pkg）- 模糊匹配
+	 * 2. 芯片型号（intent.model）- 搜索型号
+	 * 3. 语义查询（type + value + pkg）- 搜索关键字
 	 * 4. Generic fallback - 返回通用规格
 	 */
 	// eslint-disable-next-line complexity
-	public resolve(intent: ComponentIntent): ComponentSpec {
+	public async resolve(intent: ComponentIntent): Promise<ComponentSpec> {
 		const type: ComponentType = intent.type;
 
 		// 优先级 1: 直接指定 LCSC 编号
 		if (intent.lcsc) {
-			const found = SmartResolver.LCSC_DATABASE[intent.lcsc];
-			if (found) {
-				const result: ComponentSpec = {
+			const device = await this.searchByLcsc(intent.lcsc);
+			if (device) {
+				return {
 					type,
-					value: intent.value || found.value,
-					lcsc: found.lcsc,
-					package: found.package ?? 'UNKNOWN',
-					footprint: found.footprint ?? 'UNKNOWN',
-					manufacturer: found.manufacturer,
+					value: intent.value || device.name,
+					lcsc: device.lcsc,
+					package: device.footprintName || 'UNKNOWN',
+					footprint: device.footprintName || 'UNKNOWN',
+					manufacturer: device.manufacturer,
 					prefer: intent.prefer,
+					// 保存 EDA 需要的引用
+					...(device as any),
 				};
-				return result;
 			}
 			// LCSC 编号未找到，返回用户指定的编号（可能是新料号）
-			const result: ComponentSpec = {
+			return {
 				type,
 				value: intent.value || intent.model,
 				lcsc: intent.lcsc,
@@ -72,64 +65,46 @@ export class SmartResolver {
 				footprint: intent.pkg ? `${type[0]}_${intent.pkg}` : 'UNKNOWN',
 				prefer: intent.prefer,
 			};
-			return result;
 		}
 
 		// 优先级 2: 芯片型号查询
 		if (intent.model) {
-			const lcscCode = SmartResolver.MODEL_DATABASE[intent.model];
-			if (lcscCode) {
-				const found = SmartResolver.LCSC_DATABASE[lcscCode];
-				if (found) {
-					const result: ComponentSpec = {
-						type,
-						value: intent.model,
-						lcsc: found.lcsc,
-						package: found.package ?? 'UNKNOWN',
-						footprint: found.footprint ?? 'UNKNOWN',
-						manufacturer: found.manufacturer,
-						prefer: intent.prefer,
-					};
-					return result;
-				}
+			const device = await this.searchByKeyword(intent.model);
+			if (device) {
+				return {
+					type,
+					value: intent.model,
+					lcsc: device.lcsc,
+					package: device.footprintName || 'UNKNOWN',
+					footprint: device.footprintName || 'UNKNOWN',
+					manufacturer: device.manufacturer,
+					prefer: intent.prefer,
+					...(device as any),
+				};
 			}
-			// 型号未找到，返回 Generic
-			const result: ComponentSpec = {
-				type,
-				value: intent.model,
-				lcsc: 'UNKNOWN',
-				package: intent.pkg || 'UNKNOWN',
-				footprint: intent.pkg ? `${type[0]}_${intent.pkg}` : 'UNKNOWN',
-				manufacturer: 'UNKNOWN',
-				prefer: intent.prefer,
-			};
-			return result;
 		}
 
-		// 优先级 3: 语义查询（原有逻辑）
-		const value = intent.value ? intent.value : 'GENERIC';
-		const pkg = intent.pkg ? intent.pkg : '0805';
-
-		const keyAttempts = [`${type}:${value}:${pkg}`, `${type}:${value}:GENERIC`, `${type}:GENERIC:${pkg}`, `${type}:GENERIC:GENERIC`];
-
-		for (const key of keyAttempts) {
-			const found = SmartResolver.MOCK_DATABASE[key];
-			if (found) {
-				const result: ComponentSpec = {
+		// 优先级 3: 语义查询
+		if (intent.value) {
+			const keyword = `${type} ${intent.value}${intent.pkg ? ' ' + intent.pkg : ''}`;
+			const device = await this.searchByKeyword(keyword);
+			if (device) {
+				return {
 					type,
 					value: intent.value,
-					lcsc: found.lcsc,
-					package: found.package ?? pkg,
-					footprint: found.footprint ?? `${type[0]}_${pkg}`,
-					manufacturer: found.manufacturer,
+					lcsc: device.lcsc,
+					package: device.footprintName || intent.pkg || 'UNKNOWN',
+					footprint: device.footprintName || intent.pkg || 'UNKNOWN',
+					manufacturer: device.manufacturer,
 					prefer: intent.prefer,
+					...(device as any),
 				};
-				return result;
 			}
 		}
 
 		// 优先级 4: Generic fallback
-		const result: ComponentSpec = {
+		const pkg = intent.pkg || '0805';
+		return {
 			type,
 			value: intent.value,
 			lcsc: 'GENERIC',
@@ -138,6 +113,77 @@ export class SmartResolver {
 			manufacturer: 'GENERIC',
 			prefer: intent.prefer,
 		};
-		return result;
+	}
+
+	/**
+	 * 按 LCSC 编号搜索器件
+	 */
+	private async searchByLcsc(lcscCode: string): Promise<DeviceSearchResult | null> {
+		// 检查缓存
+		const cached = SmartResolver.searchCache.get(`lcsc:${lcscCode}`);
+		if (cached) {
+			console.log(`✅ [Resolver] Cache hit: ${lcscCode}`);
+			return cached;
+		}
+
+		try {
+			console.log(`🔍 [Resolver] Searching LCSC: ${lcscCode}`);
+
+			// 调用 EDA API
+			// @ts-expect-error eda 是全局对象
+			const results = await eda.lib.Device.getByLcscIds(lcscCode, undefined, false);
+
+			if (results && Array.isArray(results) && results.length > 0) {
+				const device = results[0] as DeviceSearchResult;
+				console.log(`✅ [Resolver] Found: ${device.name} (${device.lcsc})`);
+
+				// 缓存结果
+				SmartResolver.searchCache.set(`lcsc:${lcscCode}`, device);
+
+				return device;
+			}
+
+			console.warn(`⚠️ [Resolver] No result for LCSC: ${lcscCode}`);
+			return null;
+		} catch (error) {
+			console.error(`❌ [Resolver] Error searching LCSC ${lcscCode}:`, error);
+			return null;
+		}
+	}
+
+	/**
+	 * 按关键字搜索器件
+	 */
+	private async searchByKeyword(keyword: string): Promise<DeviceSearchResult | null> {
+		// 检查缓存
+		const cached = SmartResolver.searchCache.get(`kw:${keyword}`);
+		if (cached) {
+			console.log(`✅ [Resolver] Cache hit: ${keyword}`);
+			return cached;
+		}
+
+		try {
+			console.log(`🔍 [Resolver] Searching: ${keyword}`);
+
+			// 调用 EDA API
+			// @ts-expect-error eda 是全局对象
+			const results = await eda.lib.Device.search(keyword, undefined, undefined, undefined, 10, 0);
+
+			if (results && Array.isArray(results) && results.length > 0) {
+				const device = results[0] as DeviceSearchResult;
+				console.log(`✅ [Resolver] Found: ${device.name}`);
+
+				// 缓存结果
+				SmartResolver.searchCache.set(`kw:${keyword}`, device);
+
+				return device;
+			}
+
+			console.warn(`⚠️ [Resolver] No result for: ${keyword}`);
+			return null;
+		} catch (error) {
+			console.error(`❌ [Resolver] Error searching ${keyword}:`, error);
+			return null;
+		}
 	}
 }
